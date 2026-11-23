@@ -1,0 +1,10 @@
+# Collector
+atproto~=0.0.75
+google-api-python-client~=2.202
+requests~=2.34
+vaderSentiment==3.3.2
+pandas>=2.2,<4
+
+# Dashboard
+streamlit~=1.67
+altair>=5.4,<7
