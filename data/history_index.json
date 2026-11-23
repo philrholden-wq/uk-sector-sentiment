@@ -1,0 +1,48 @@
+{
+  "sector": "UK high street banking",
+  "updated_at_utc": "2026-11-23T16:55:34Z",
+  "runs": [
+    {
+      "run_date": "2026-11-23",
+      "file": "sentiment_2026-11-23.csv",
+      "generated_at_utc": "2026-11-23T16:53:12Z",
+      "sector": "UK high street banking",
+      "lookback_days": 7,
+      "sources": [
+        "bluesky",
+        "youtube",
+        "reddit_brave"
+      ],
+      "warnings": [],
+      "total_mentions": 564,
+      "positive": 264,
+      "negative": 137,
+      "neutral": 163,
+      "positive_pct": 46.8,
+      "negative_pct": 24.3,
+      "neutral_pct": 28.9,
+      "net_sentiment": 22.5,
+      "mean_compound": 0.1623,
+      "by_source": {
+        "bluesky": {
+          "mentions": 264,
+          "positive_pct": 44.3,
+          "negative_pct": 29.2,
+          "net_sentiment": 15.2
+        },
+        "reddit_brave": {
+          "mentions": 1,
+          "positive_pct": 100.0,
+          "negative_pct": 0.0,
+          "net_sentiment": 100.0
+        },
+        "youtube": {
+          "mentions": 299,
+          "positive_pct": 48.8,
+          "negative_pct": 20.1,
+          "net_sentiment": 28.8
+        }
+      }
+    }
+  ]
+}
