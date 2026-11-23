@@ -1,23 +1,3 @@
-
-Show more
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-README.md
 """
 app.py - Streamlit dashboard for the UK consumer sentiment collector.
 
