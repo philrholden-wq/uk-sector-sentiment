@@ -8,18 +8,26 @@ Sources (each is optional and runs only when its key is set):
   2. YouTube        (google-api-python-client)  YOUTUBE_API_KEY
   3. Reddit threads via Brave Search API         SEARCH_API_KEY  (sent as X-Subscription-Token)
 
-Every run:
-  * collects recent UK-relevant mentions of your sector keywords
+Sectors:
+  Each market sector is a JSON file in sectors/ (brands, aliases, phrases).
+  uk-high-street-banking.json is created automatically if the folder is empty.
+  New sectors can be added from GitHub's "Run workflow" form (see README).
+
+Every run, for each sector:
+  * collects recent UK-relevant mentions of the sector's brands and phrases
   * removes duplicates (same item, same Reddit thread, or identical text)
   * scores each mention with VADER
-  * writes data/sentiment_YYYY-MM-DD.csv (same-day reruns overwrite)
-  * updates data/history_index.json (one summary row per run, read by app.py)
+  * writes data/<sector>/sentiment_YYYY-MM-DD.csv (same-day reruns overwrite)
+  * updates data/<sector>/history_index.json (one summary row per run, read by app.py)
+  * counts Brave requests in data/api_usage.json and stops at BRAVE_MONTHLY_LIMIT
 
 Usage:
-  python collector.py                                 # live run, last 7 days
-  python collector.py --lookback-days 3
+  python collector.py                                 # every weekly sector, last 7 days
+  python collector.py --sector uk-high-street-banking # one sector
+  python collector.py --new-sector-name "UK supermarkets" \\
+      --new-brands "Tesco*, Sainsbury's*, Asda*, Aldi, Lidl" --new-terms "supermarket, food shop"
   python collector.py --demo --data-dir demo_data     # synthetic data, no keys needed
-  python collector.py --rebuild-index                 # rebuild the index from the CSVs
+  python collector.py --rebuild-index                 # rebuild the indexes from the CSVs
 """
 
 from __future__ import annotations
@@ -44,13 +52,42 @@ import requests
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 # =============================================================================
-# SECTOR CONFIGURATION: edit this block to change the market sector.
+# SECTOR CONFIGURATION
+# Each sector is a JSON file in sectors/ (for example sectors/uk-supermarkets.json)
+# and its data goes to data/<file name>/. Add a sector without editing code:
+# GitHub > Actions > "Weekly sentiment collection" > Run workflow, then fill in
+# "New sector name", "Brands" and "Sector phrases". See README, "Adding sectors".
 # =============================================================================
-SECTOR_CONFIG: dict = {
+SECTORS_DIR = Path(os.getenv("SECTORS_DIR", "sectors"))
+
+# UK filters shared by every sector. A sector file can add its own with
+# "extra_uk_signals" and "extra_uk_subreddits".
+# A mention from Bluesky, YouTube or a non-UK subreddit is kept only if it
+# contains at least one UK signal (or names a brand marked uk_unique).
+GENERIC_UK_SIGNALS = [
+    "£", "UK", "U.K.", "Britain", "British", "England", "English", "Scotland",
+    "Scottish", "Wales", "Welsh", "Northern Ireland", "London", "Manchester",
+    "Birmingham", "Glasgow", "Edinburgh", "Cardiff", "Belfast", "Leeds",
+    "Liverpool", "Bristol", "high street", "HMRC", "quid", "council tax",
+    "Post Office", "NHS",
+]
+# Reddit results from these subreddits count as UK without an extra signal.
+GENERIC_UK_SUBREDDITS = [
+    "AskUK", "UKPersonalFinance", "unitedkingdom", "CasualUK", "britishproblems",
+    "LegalAdviceUK", "london", "Scotland", "Wales", "northernireland", "AskBrits",
+]
+# Brave runs one targeted query per search term for each of these subreddits,
+# plus one general "site:reddit.com + UK" query per term.
+DEFAULT_TARGET_SUBREDDITS = ["AskUK", "CasualUK"]
+MAX_TARGET_SUBREDDITS = 3
+
+# Written to sectors/uk-high-street-banking.json if the sectors folder is empty.
+DEFAULT_SECTOR: dict = {
     "sector_name": "UK high street banking",
+    "include_in_schedule": True,
 
     # Brands to track. Aliases are matched as whole words, case-insensitive.
-    # The first alias is used as the search query. Set "uk_unique" to True only
+    # The first alias is used as the search query. Set "uk_unique" to true only
     # when the name is unambiguous outside the UK: a uk_unique brand counts as
     # a UK signal by itself.
     "brands": {
@@ -79,29 +116,108 @@ SECTOR_CONFIG: dict = {
         "high street bank", "bank branch", "branch closure", "current account",
         "switching bank", "banking app", "overdraft", "sort code", "faster payments",
     ],
-
-    # UK subreddits. Reddit search results from these are accepted without
-    # needing an extra UK signal; results from other subreddits must have one.
-    "uk_subreddits": [
-        "AskUK", "UKPersonalFinance", "unitedkingdom", "CasualUK", "britishproblems",
-        "LegalAdviceUK", "london", "Scotland", "Wales", "northernireland", "AskBrits",
-    ],
-
-    # Brave runs one targeted query per term for each of these subreddits,
-    # plus one general "site:reddit.com + UK" query per term.
+    "extra_uk_signals": ["sort code", "FCA", "Financial Ombudsman", "ISA", "Faster Payments"],
+    "extra_uk_subreddits": [],
     "brave_target_subreddits": ["UKPersonalFinance", "AskUK"],
-
-    # A mention from Bluesky, YouTube or a non-UK subreddit is kept only if it
-    # contains at least one of these (or a uk_unique brand).
-    "uk_signals": [
-        "£", "UK", "U.K.", "Britain", "British", "England", "English", "Scotland",
-        "Scottish", "Wales", "Welsh", "Northern Ireland", "London", "Manchester",
-        "Birmingham", "Glasgow", "Edinburgh", "Cardiff", "Belfast", "Leeds",
-        "Liverpool", "Bristol", "high street", "sort code", "FCA",
-        "Financial Ombudsman", "HMRC", "ISA", "quid", "council tax",
-        "Faster Payments", "Post Office", "NHS",
-    ],
 }
+
+
+def slugify(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", name.lower().replace("&", " and ")).strip("-") or "sector"
+
+
+def expand_config(raw: dict, slug: str) -> dict:
+    """Adds the shared UK filters to a sector file and checks it is usable."""
+    if not str(raw.get("sector_name", "")).strip():
+        raise ValueError("missing sector_name")
+    brands = raw.get("brands") or {}
+    for brand, spec in brands.items():
+        if not spec.get("aliases"):
+            raise ValueError(f"brand '{brand}' has no aliases")
+    if not brands and not raw.get("sector_terms"):
+        raise ValueError("needs at least one brand or sector term")
+    targets = (raw.get("brave_target_subreddits") or DEFAULT_TARGET_SUBREDDITS)[:MAX_TARGET_SUBREDDITS]
+    return {
+        **raw, "slug": slug, "brands": brands,
+        "sector_terms": list(raw.get("sector_terms") or []),
+        "brave_target_subreddits": targets,
+        "uk_signals": list(dict.fromkeys(GENERIC_UK_SIGNALS + list(raw.get("extra_uk_signals") or []))),
+        "uk_subreddits": list(dict.fromkeys(
+            GENERIC_UK_SUBREDDITS + list(raw.get("extra_uk_subreddits") or []) + targets)),
+    }
+
+
+def format_sector_json(raw: dict) -> str:
+    """Readable JSON: one line per brand and per list, so the file is easy to edit on GitHub."""
+    def one(v):
+        return json.dumps(v, ensure_ascii=False)
+    lines = []
+    for key, value in raw.items():
+        if key == "brands":
+            inner = [f"    {one(b)}: {one(spec)}" for b, spec in value.items()]
+            lines.append('  "brands": {\n' + ",\n".join(inner) + "\n  }" if inner else '  "brands": {}')
+        else:
+            lines.append(f"  {one(key)}: {one(value)}")
+    return "{\n" + ",\n".join(lines) + "\n}\n"
+
+
+def save_sector(raw: dict) -> str:
+    SECTORS_DIR.mkdir(parents=True, exist_ok=True)
+    slug = slugify(raw["sector_name"])
+    path = SECTORS_DIR / f"{slug}.json"
+    path.write_text(format_sector_json(raw), encoding="utf-8")
+    log.info("Saved sector settings to %s", path)
+    return slug
+
+
+def load_sectors() -> dict[str, dict]:
+    """All sector files, keyed by file name without .json."""
+    if not list(SECTORS_DIR.glob("*.json")):
+        save_sector(DEFAULT_SECTOR)
+    sectors = {}
+    for path in sorted(SECTORS_DIR.glob("*.json")):
+        try:
+            sectors[path.stem] = expand_config(json.loads(path.read_text(encoding="utf-8")), path.stem)
+        except (json.JSONDecodeError, ValueError, TypeError, AttributeError) as exc:
+            log.error("Skipping %s: %s", path.name, exc)
+    return sectors
+
+
+def _split_list(text: str | None) -> list[str]:
+    return [x.strip() for x in re.split(r"[,\n]", text or "") if x.strip()]
+
+
+def sector_from_form(name: str, brands_text: str, terms_text: str, subreddits_text: str,
+                     schedule: bool) -> dict:
+    """Builds a sector from the GitHub "Run workflow" form fields.
+
+    Brands are comma-separated. "|" adds aliases and "*" marks a UK-only name,
+    e.g. "Tesco*, Sainsbury's*|Sainsburys, Marks & Spencer*|M&S, Aldi, Lidl".
+    """
+    brands: dict = {}
+    for item in _split_list(brands_text):
+        uk_unique = "*" in item
+        names = [n.strip() for n in item.replace("*", "").split("|") if n.strip()]
+        if not names:
+            continue
+        aliases = []
+        for n in names:   # match straight and curly apostrophes, and none at all
+            aliases.append(n)
+            if "'" in n or "\u2019" in n:
+                plain = n.replace("\u2019", "'")
+                aliases += [plain, plain.replace("'", "\u2019"), plain.replace("'", "")]
+        brands[names[0]] = {"aliases": list(dict.fromkeys(aliases)), "uk_unique": uk_unique}
+    subs = [s.strip().removeprefix("r/").strip("/") for s in _split_list(subreddits_text)]
+    return {
+        "sector_name": name.strip(),
+        "include_in_schedule": schedule,
+        "brands": brands,
+        "sector_terms": _split_list(terms_text),
+        "extra_uk_signals": [],
+        "extra_uk_subreddits": [],
+        "brave_target_subreddits": [s for s in subs if s][:MAX_TARGET_SUBREDDITS] or DEFAULT_TARGET_SUBREDDITS,
+    }
+
 
 # ---- Collection limits (kept well inside each free tier) --------------------
 BLUESKY_PAGE_SIZE = 100            # API maximum per page
@@ -111,8 +227,10 @@ YOUTUBE_MAX_SEARCHES = 20          # search.list: 100 calls/day free bucket
 YOUTUBE_VIDEOS_PER_SEARCH = 10
 YOUTUBE_COMMENTS_PER_VIDEO = 50    # commentThreads.list: 1 unit per call
 
-BRAVE_MAX_REQUESTS = 90           # 27 terms x 3 queries = 81; ~350-390 a month, inside
-                                   # Brave's $5 monthly credit (about 1,000 requests)
+BRAVE_MAX_REQUESTS = 90            # per sector per run (banking: 27 terms x 3 = 81)
+# Brave's $5 monthly credit covers about 1,000 requests. The collector counts its
+# requests in data/api_usage.json and stops at this monthly ceiling.
+BRAVE_MONTHLY_LIMIT = int(os.getenv("BRAVE_MONTHLY_LIMIT", "900"))
 SEARCH_RESULTS_PER_QUERY = 20      # Brave maximum per request
 BRAVE_PAUSE_SECONDS = 1.1          # stay well under the rate limit
 
@@ -225,6 +343,7 @@ class SourceResult:
     rows: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
     enabled: bool = True
+    requests: int = 0
 
 
 # =============================================================================
@@ -403,7 +522,7 @@ def _brave_search(query: str, freshness: str, key: str) -> list[dict]:
     return out
 
 
-def collect_reddit_brave(matcher: Matcher, cutoff: datetime) -> SourceResult:
+def collect_reddit_brave(matcher: Matcher, cutoff: datetime, budget: int = BRAVE_MAX_REQUESTS) -> SourceResult:
     key = os.getenv("SEARCH_API_KEY")
     if not key:
         log.warning("Reddit via Brave skipped: SEARCH_API_KEY not set.")
@@ -414,7 +533,13 @@ def collect_reddit_brave(matcher: Matcher, cutoff: datetime) -> SourceResult:
     freshness = f"{cutoff.date().isoformat()}to{datetime.now(timezone.utc).date().isoformat()}"
     seen_threads: set[str] = set()
     queries = brave_queries(matcher)
+    if budget < len(queries):
+        res.warnings.append(f"Brave monthly limit ({BRAVE_MONTHLY_LIMIT} requests) reached: ran "
+                            f"{max(budget, 0)} of {len(queries)} Reddit searches for this sector.")
+        log.warning(res.warnings[-1])
+        queries = queries[:max(budget, 0)]
     for q in queries:
+        res.requests += 1
         try:
             results = _brave_search(q, freshness, key)
         except requests.HTTPError as exc:
@@ -562,7 +687,7 @@ def summarise(df: pd.DataFrame) -> dict:
     }
 
 
-def load_index(data_dir: Path) -> list[dict]:
+def load_index(data_dir: Path, sector_name: str) -> list[dict]:
     path = data_dir / "history_index.json"
     if not path.exists():
         return []
@@ -570,11 +695,11 @@ def load_index(data_dir: Path) -> list[dict]:
         return json.loads(path.read_text(encoding="utf-8")).get("runs", [])
     except (json.JSONDecodeError, AttributeError):
         log.warning("history_index.json was unreadable; rebuilding from CSVs.")
-        return rebuild_index(data_dir, write=False)
+        return rebuild_index(data_dir, sector_name, write=False)
 
 
-def write_index(data_dir: Path, runs: list[dict]) -> None:
-    payload = {"sector": SECTOR_CONFIG["sector_name"],
+def write_index(data_dir: Path, runs: list[dict], sector_name: str) -> None:
+    payload = {"sector": sector_name,
                "updated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                "runs": sorted(runs, key=lambda r: r["run_date"])}
     tmp = data_dir / "history_index.json.tmp"
@@ -582,7 +707,7 @@ def write_index(data_dir: Path, runs: list[dict]) -> None:
     tmp.replace(data_dir / "history_index.json")      # atomic replace
 
 
-def rebuild_index(data_dir: Path, write: bool = True) -> list[dict]:
+def rebuild_index(data_dir: Path, sector_name: str, write: bool = True) -> list[dict]:
     runs = []
     for csv in sorted(data_dir.glob("sentiment_*.csv")):
         m = re.match(r"sentiment_(\d{4}-\d{2}-\d{2})\.csv$", csv.name)
@@ -590,19 +715,19 @@ def rebuild_index(data_dir: Path, write: bool = True) -> list[dict]:
             df = pd.read_csv(csv)
             runs.append({"run_date": m.group(1), "file": csv.name,
                          "generated_at_utc": df["collected_at_utc"].iloc[0] if len(df) else "",
-                         "sector": SECTOR_CONFIG["sector_name"],
+                         "sector": sector_name,
                          "sources": sorted(df["source"].unique().tolist()) if len(df) else [],
                          **summarise(df)})
     if write:
-        write_index(data_dir, runs)
+        write_index(data_dir, runs, sector_name)
         log.info("Rebuilt history_index.json from %d CSV files", len(runs))
     return runs
 
 
-def prune_youtube(data_dir: Path, today: str, retention_days: int) -> int:
+def prune_youtube(data_dir: Path, today: str, retention_days: int, sector_name: str) -> int:
     """Remove YouTube rows from CSVs older than retention_days. Returns files changed."""
     limit = datetime.fromisoformat(today).date() - timedelta(days=retention_days)
-    runs = load_index(data_dir)
+    runs = load_index(data_dir, sector_name)
     changed = 0
     for csv in sorted(data_dir.glob("sentiment_*.csv")):
         m = re.match(r"sentiment_(\d{4}-\d{2}-\d{2})\.csv$", csv.name)
@@ -617,7 +742,7 @@ def prune_youtube(data_dir: Path, today: str, retention_days: int) -> int:
                 r["youtube_pruned"] = True
         changed += 1
     if changed:
-        write_index(data_dir, runs)
+        write_index(data_dir, runs, sector_name)
         log.info("Removed YouTube rows from %d CSV(s) older than %d days", changed, retention_days)
     return changed
 
@@ -627,7 +752,7 @@ def write_github_summary(entry: dict) -> None:
     path = os.getenv("GITHUB_STEP_SUMMARY")
     if not path:
         return
-    lines = [f"### Sentiment run {entry['run_date']}", "",
+    lines = [f"### {entry['sector']}: run {entry['run_date']}", "",
              f"Total mentions: **{entry['total_mentions']}**, net sentiment: **{entry['net_sentiment']}**", "",
              "| Source | Mentions | Net |", "|---|---|---|"]
     for src, s in entry["by_source"].items():
@@ -638,35 +763,64 @@ def write_github_summary(entry: dict) -> None:
         fh.write("\n".join(lines) + "\n")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--data-dir", default=os.getenv("DATA_DIR", "data"))
-    parser.add_argument("--lookback-days", type=int, default=int(os.getenv("LOOKBACK_DAYS", "7")))
-    parser.add_argument("--run-date", help="Override the run date (YYYY-MM-DD), e.g. to back-fill demo data.")
-    parser.add_argument("--demo", action="store_true", help="Generate synthetic data; no API calls.")
-    parser.add_argument("--rebuild-index", action="store_true")
-    args = parser.parse_args()
+def migrate_flat_layout(data_root: Path) -> None:
+    """Moves runs saved by the single-sector version (data/sentiment_*.csv) into
+    data/<sector>/, so earlier history keeps appearing in the dashboard."""
+    index = data_root / "history_index.json"
+    flat = sorted(data_root.glob("sentiment_*.csv")) + ([index] if index.exists() else [])
+    if not flat:
+        return
+    name = DEFAULT_SECTOR["sector_name"]
+    if index.exists():
+        try:
+            name = json.loads(index.read_text(encoding="utf-8")).get("sector", name)
+        except json.JSONDecodeError:
+            pass
+    target = data_root / slugify(name)
+    target.mkdir(parents=True, exist_ok=True)
+    for f in flat:
+        if (target / f.name).exists():
+            log.warning("Not moving %s: %s already exists", f, target / f.name)
+        else:
+            f.replace(target / f.name)
+    log.info("Moved %d earlier file(s) into %s/", len(flat), target)
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    data_dir = Path(args.data_dir)
+
+def load_usage(data_root: Path) -> dict:
+    path = data_root / "api_usage.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def save_usage(data_root: Path, usage: dict) -> None:
+    (data_root / "api_usage.json").write_text(json.dumps(usage, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def run_sector(config: dict, data_root: Path, run_date: str, now_utc: datetime, lookback_days: int,
+               demo: bool, usage: dict) -> int:
+    """Collects, scores and saves one sector. Returns 0 on success, 2 if no source is set up."""
+    sector_name = config["sector_name"]
+    data_dir = data_root / config["slug"]
     data_dir.mkdir(parents=True, exist_ok=True)
-    if args.rebuild_index:
-        rebuild_index(data_dir)
-        return 0
+    cutoff = now_utc - timedelta(days=lookback_days)
+    matcher = Matcher(config)
+    log.info("=== %s (%s) ===", sector_name, config["slug"])
 
-    now_utc = datetime.now(timezone.utc)
-    run_date = args.run_date or now_utc.astimezone(UK_TZ).date().isoformat()
-    cutoff = now_utc - timedelta(days=args.lookback_days)
-    matcher = Matcher(SECTOR_CONFIG)
-
-    if args.demo:
+    if demo:
         rows, warnings, sources = collect_demo(matcher, run_date), [], ["demo"]
     else:
+        month = now_utc.astimezone(UK_TZ).strftime("%Y-%m")
+        brave_used = usage.setdefault("brave_requests_by_month", {}).get(month, 0)
         results = {
             "bluesky": collect_bluesky(matcher, cutoff),
             "youtube": collect_youtube(matcher, cutoff),
-            "reddit_brave": collect_reddit_brave(matcher, cutoff),
+            "reddit_brave": collect_reddit_brave(matcher, cutoff, budget=BRAVE_MONTHLY_LIMIT - brave_used),
         }
+        usage["brave_requests_by_month"][month] = brave_used + results["reddit_brave"].requests
+        log.info("Brave requests this month: %d of %d", usage["brave_requests_by_month"][month],
+                 BRAVE_MONTHLY_LIMIT)
         sources = [name for name, r in results.items() if r.enabled]
         if not sources:
             log.error("No sources configured. Set at least one set of keys (see README).")
@@ -679,25 +833,105 @@ def main() -> int:
     log.info("Deduplication removed %d of %d rows", before - len(rows), before)
 
     df = score(rows)
-    df.insert(0, "collected_at_utc", now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"))
-    df.insert(0, "run_date", run_date)
+    df["run_date"] = run_date                 # assignment also works for an empty run
+    df["collected_at_utc"] = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
     df = df.reindex(columns=CSV_COLUMNS).sort_values("compound", ascending=False)
     csv_name = f"sentiment_{run_date}.csv"
     df.to_csv(data_dir / csv_name, index=False, encoding="utf-8")
 
     entry = {"run_date": run_date, "file": csv_name,
              "generated_at_utc": now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
-             "sector": SECTOR_CONFIG["sector_name"], "lookback_days": args.lookback_days,
+             "sector": sector_name, "lookback_days": lookback_days,
              "sources": sources, "warnings": warnings[:50], **summarise(df)}
-    write_index(data_dir, [r for r in load_index(data_dir) if r.get("run_date") != run_date] + [entry])
-    if not args.demo and YOUTUBE_RETENTION_DAYS > 0:
-        prune_youtube(data_dir, run_date, YOUTUBE_RETENTION_DAYS)
+    runs = [r for r in load_index(data_dir, sector_name) if r.get("run_date") != run_date] + [entry]
+    write_index(data_dir, runs, sector_name)
+    if not demo and YOUTUBE_RETENTION_DAYS > 0:
+        prune_youtube(data_dir, run_date, YOUTUBE_RETENTION_DAYS, sector_name)
     write_github_summary(entry)
 
-    log.info("Saved %s: %d mentions, net sentiment %s", csv_name, entry["total_mentions"], entry["net_sentiment"])
+    log.info("Saved %s/%s: %d mentions, net sentiment %s", data_dir, csv_name,
+             entry["total_mentions"], entry["net_sentiment"])
     if entry["total_mentions"] == 0:
         log.warning("No matching mentions this run. The empty run is still logged.")
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--data-dir", default=os.getenv("DATA_DIR", "data"))
+    parser.add_argument("--sector", default=os.getenv("SECTOR", "all"),
+                        help="'all' (every sector with include_in_schedule) or a file name from sectors/")
+    parser.add_argument("--new-sector-name", default=os.getenv("NEW_SECTOR_NAME", ""))
+    parser.add_argument("--new-brands", default=os.getenv("NEW_BRANDS", ""),
+                        help="Comma-separated; '|' adds aliases, '*' marks UK-only names")
+    parser.add_argument("--new-terms", default=os.getenv("NEW_TERMS", ""))
+    parser.add_argument("--new-subreddits", default=os.getenv("NEW_SUBREDDITS", ""))
+    parser.add_argument("--not-weekly", action="store_true",
+                        default=os.getenv("ADD_TO_WEEKLY", "true").strip().lower() == "false",
+                        help="Save the new sector without adding it to the Monday run")
+    parser.add_argument("--lookback-days", type=int, default=int(os.getenv("LOOKBACK_DAYS", "7")))
+    parser.add_argument("--run-date", help="Override the run date (YYYY-MM-DD), e.g. to back-fill demo data.")
+    parser.add_argument("--demo", action="store_true", help="Generate synthetic data; no API calls.")
+    parser.add_argument("--rebuild-index", action="store_true")
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    data_root = Path(args.data_dir)
+    data_root.mkdir(parents=True, exist_ok=True)
+    migrate_flat_layout(data_root)
+    sectors = load_sectors()
+
+    requested = (args.sector or "all").strip()
+    if args.new_sector_name.strip():
+        raw = sector_from_form(args.new_sector_name, args.new_brands, args.new_terms,
+                               args.new_subreddits, schedule=not args.not_weekly)
+        try:
+            slug = slugify(raw["sector_name"])
+            sectors[slug] = expand_config(raw, slug)
+        except ValueError as exc:
+            log.error("New sector not saved: %s. Fill in Brands or Sector phrases.", exc)
+            return 2
+        save_sector(raw)
+        log.info("New sector '%s': %d brands (%d UK-only), %d phrases, Reddit targets %s",
+                 raw["sector_name"], len(raw["brands"]),
+                 sum(b["uk_unique"] for b in raw["brands"].values()),
+                 len(raw["sector_terms"]), ", ".join(raw["brave_target_subreddits"]))
+        targets = [slug]
+    elif requested.lower() == "all":
+        targets = [k for k, c in sectors.items() if c.get("include_in_schedule", True)]
+    else:
+        slug = requested.removesuffix(".json")
+        slug = slug if slug in sectors else slugify(slug)
+        if slug not in sectors:
+            log.error("Unknown sector '%s'. Available: %s", requested, ", ".join(sectors) or "none")
+            return 2
+        targets = [slug]
+    if not targets:
+        log.error("No sectors to run. Check include_in_schedule in your sectors/*.json files.")
+        return 2
+
+    if args.rebuild_index:
+        for slug in targets:
+            (data_root / slug).mkdir(parents=True, exist_ok=True)
+            rebuild_index(data_root / slug, sectors[slug]["sector_name"])
+        return 0
+
+    now_utc = datetime.now(timezone.utc)
+    run_date = args.run_date or now_utc.astimezone(UK_TZ).date().isoformat()
+    usage = load_usage(data_root)
+    status = 0
+    for slug in targets:
+        try:
+            code = run_sector(sectors[slug], data_root, run_date, now_utc, args.lookback_days, args.demo, usage)
+        except Exception:                       # one failing sector should not stop the others
+            log.exception("Sector %s failed", slug)
+            code = 1
+        if code == 2:                           # no keys at all: no point trying other sectors
+            return 2
+        status = status or code
+        if not args.demo:
+            save_usage(data_root, usage)
+    return status
 
 
 if __name__ == "__main__":
