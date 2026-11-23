@@ -1,7 +1,8 @@
 """
 app.py - Streamlit dashboard for the UK consumer sentiment collector.
 
-Reads data/history_index.json and the date-stamped CSVs in data/.
+Reads each sector folder in data/ (data/<sector>/history_index.json and its
+date-stamped CSVs). A sidebar dropdown switches between sectors.
 Run locally:   streamlit run app.py
 Preview demo:  DATA_DIR=demo_data streamlit run app.py
 """
@@ -17,8 +18,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
-INDEX_PATH = DATA_DIR / "history_index.json"
+DATA_ROOT = Path(os.getenv("DATA_DIR", "data"))
 
 st.set_page_config(page_title="UK Consumer Sentiment", layout="wide")
 
@@ -33,14 +33,33 @@ def src_label(s: str) -> str:
 # Data loading. The cache key includes file modification times, so a new commit
 # from GitHub Actions shows up as soon as Streamlit Cloud pulls it.
 # -----------------------------------------------------------------------------
-def _fingerprint() -> tuple:
-    if not DATA_DIR.exists():
+def discover_sectors() -> dict[str, Path]:
+    """Sector name -> folder. Also accepts the older flat layout (CSVs directly in data/)."""
+    if not DATA_ROOT.exists():
+        return {}
+    found: dict[str, Path] = {}
+    for folder in sorted(p for p in DATA_ROOT.iterdir() if p.is_dir()) + [DATA_ROOT]:
+        if not any(folder.glob("sentiment_*.csv")):
+            continue
+        name = folder.name.replace("-", " ").capitalize() if folder != DATA_ROOT else "UK consumer sentiment"
+        try:
+            name = json.loads((folder / "history_index.json").read_text(encoding="utf-8")).get("sector", name)
+        except (OSError, json.JSONDecodeError):
+            pass
+        found[name if name not in found else f"{name} ({folder.name})"] = folder
+    return dict(sorted(found.items(), key=lambda kv: kv[0].lower()))
+
+
+def _fingerprint(folder: Path) -> tuple:
+    if not folder.exists():
         return ()
-    return tuple(sorted((p.name, p.stat().st_mtime) for p in DATA_DIR.iterdir() if p.is_file()))
+    return tuple(sorted((p.name, p.stat().st_mtime) for p in folder.iterdir() if p.is_file()))
 
 
 @st.cache_data(show_spinner=False)
-def load_index(_fp: tuple) -> tuple[str, pd.DataFrame]:
+def load_index(folder: str, _fp: tuple) -> tuple[str, pd.DataFrame]:
+    DATA_DIR = Path(folder)
+    INDEX_PATH = DATA_DIR / "history_index.json"
     sector = "UK consumer sentiment"
     runs: list[dict] = []
     if INDEX_PATH.exists():
@@ -71,9 +90,10 @@ def load_index(_fp: tuple) -> tuple[str, pd.DataFrame]:
 
 
 @st.cache_data(show_spinner=False)
-def load_run(file_name: str, _fp: tuple) -> pd.DataFrame:
-    df = pd.read_csv(DATA_DIR / file_name, dtype={"item_id": str})
-    for col in ("brands", "matched_terms", "text", "community", "context", "url"):
+def load_run(folder: str, file_name: str, _fp: tuple) -> pd.DataFrame:
+    text_cols = ("brands", "matched_terms", "text", "community", "context", "url")
+    df = pd.read_csv(Path(folder) / file_name, dtype={"item_id": str, **{c: str for c in text_cols}})
+    for col in text_cols:
         if col in df:
             df[col] = df[col].fillna("")
     if "created_utc" in df:
@@ -110,13 +130,22 @@ def delta(cur, prev):
 # -----------------------------------------------------------------------------
 # Empty state
 # -----------------------------------------------------------------------------
-fp = _fingerprint()
-sector, index = load_index(fp)
+sectors = discover_sectors()
+with st.sidebar:
+    st.header("Sector")
+    if sectors:
+        sector_choice = st.selectbox("Market sector", list(sectors), index=0,
+                                     help="Add sectors from GitHub: Actions > Run workflow. See README.")
+        DATA_DIR = sectors[sector_choice]
+    else:
+        DATA_DIR = DATA_ROOT
+fp = _fingerprint(DATA_DIR)
+sector, index = load_index(str(DATA_DIR), fp) if sectors else ("", pd.DataFrame())
 
 if index.empty:
     st.title("UK Consumer Sentiment")
     st.info(
-        f"No runs found in `{DATA_DIR}/`. Run `python collector.py` with your credentials, "
+        f"No runs found in `{DATA_ROOT}/`. Run `python collector.py` with your credentials, "
         "or preview the dashboard with demo data:\n\n"
         "```\npython collector.py --demo --data-dir demo_data\nDATA_DIR=demo_data streamlit run app.py\n```"
     )
@@ -137,7 +166,7 @@ with st.sidebar:
     selected = runs_desc.iloc[choice]
     previous = runs_desc.iloc[choice + 1] if choice + 1 < len(runs_desc) else None
 
-df = load_run(selected["file"], fp)
+df = load_run(str(DATA_DIR), selected["file"], fp)
 
 with st.sidebar:
     st.header("Filters")
@@ -348,7 +377,7 @@ for tab, polarity in zip(st.tabs(["Most positive", "Most negative"]), ["positive
             show_table(view, polarity)
 
 st.download_button("Download filtered rows (CSV)", view.drop(columns="source_label").to_csv(index=False).encode("utf-8"),
-                   file_name=f"filtered_{pd.Timestamp(selected['run_date']).date().isoformat()}.csv",
+                   file_name=f"filtered_{DATA_DIR.name}_{pd.Timestamp(selected['run_date']).date().isoformat()}.csv",
                    mime="text/csv")
 
 st.caption(
