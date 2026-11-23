@@ -1,0 +1,28 @@
+{
+  "sector_name": "UK high street banking",
+  "include_in_schedule": true,
+  "brands": {
+    "Barclays": {"aliases": ["Barclays", "Barclaycard"], "uk_unique": true},
+    "HSBC": {"aliases": ["HSBC UK", "HSBC"], "uk_unique": false},
+    "Lloyds": {"aliases": ["Lloyds Bank", "Lloyds"], "uk_unique": true},
+    "NatWest": {"aliases": ["NatWest", "Nat West"], "uk_unique": true},
+    "RBS": {"aliases": ["Royal Bank of Scotland", "RBS"], "uk_unique": true},
+    "Santander": {"aliases": ["Santander UK", "Santander"], "uk_unique": false},
+    "Halifax": {"aliases": ["Halifax Bank", "Halifax"], "uk_unique": false},
+    "Nationwide": {"aliases": ["Nationwide Building Society", "Nationwide"], "uk_unique": false},
+    "TSB": {"aliases": ["TSB Bank", "TSB"], "uk_unique": true},
+    "Monzo": {"aliases": ["Monzo"], "uk_unique": true},
+    "Starling": {"aliases": ["Starling Bank"], "uk_unique": true},
+    "Revolut": {"aliases": ["Revolut"], "uk_unique": false},
+    "Virgin Money": {"aliases": ["Virgin Money"], "uk_unique": true},
+    "Metro Bank": {"aliases": ["Metro Bank"], "uk_unique": true},
+    "First Direct": {"aliases": ["First Direct"], "uk_unique": true},
+    "Co-op Bank": {"aliases": ["Co-op Bank", "Co-operative Bank"], "uk_unique": true},
+    "Bank of Scotland": {"aliases": ["Bank of Scotland"], "uk_unique": true},
+    "Chase UK": {"aliases": ["Chase UK"], "uk_unique": true}
+  },
+  "sector_terms": ["high street bank", "bank branch", "branch closure", "current account", "switching bank", "banking app", "overdraft", "sort code", "faster payments"],
+  "extra_uk_signals": ["sort code", "FCA", "Financial Ombudsman", "ISA", "Faster Payments"],
+  "extra_uk_subreddits": [],
+  "brave_target_subreddits": ["UKPersonalFinance", "AskUK"]
+}

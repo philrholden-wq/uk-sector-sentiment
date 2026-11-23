@@ -1,0 +1,21 @@
+{
+  "sector_name": "UK supermarkets",
+  "include_in_schedule": true,
+  "brands": {
+    "Tesco": {"aliases": ["Tesco"], "uk_unique": true},
+    "Sainsbury's": {"aliases": ["Sainsbury's", "Sainsbury’s", "Sainsburys"], "uk_unique": true},
+    "Asda": {"aliases": ["Asda"], "uk_unique": true},
+    "Morrisons": {"aliases": ["Morrisons"], "uk_unique": true},
+    "Waitrose": {"aliases": ["Waitrose"], "uk_unique": true},
+    "Marks & Spencer": {"aliases": ["Marks & Spencer", "M&S"], "uk_unique": true},
+    "Co-op Food": {"aliases": ["Co-op Food"], "uk_unique": false},
+    "Aldi": {"aliases": ["Aldi"], "uk_unique": false},
+    "Lidl": {"aliases": ["Lidl"], "uk_unique": false},
+    "Iceland Foods": {"aliases": ["Iceland Foods", "Iceland"], "uk_unique": true},
+    "Ocado": {"aliases": ["Ocado"], "uk_unique": true}
+  },
+  "sector_terms": ["supermarket", "food shop", "grocery prices", "self-checkout", "meal deal", "loyalty card"],
+  "extra_uk_signals": [],
+  "extra_uk_subreddits": [],
+  "brave_target_subreddits": ["AskUK", "CasualUK"]
+}

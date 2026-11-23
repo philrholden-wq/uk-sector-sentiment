@@ -1,0 +1,48 @@
+{
+  "sector": "UK supermarkets",
+  "updated_at_utc": "2026-11-23T17:32:40Z",
+  "runs": [
+    {
+      "run_date": "2026-11-23",
+      "file": "sentiment_2026-11-23.csv",
+      "generated_at_utc": "2026-11-23T17:30:45Z",
+      "sector": "UK supermarkets",
+      "lookback_days": 7,
+      "sources": [
+        "bluesky",
+        "youtube",
+        "reddit_brave"
+      ],
+      "warnings": [],
+      "total_mentions": 2230,
+      "positive": 1208,
+      "negative": 391,
+      "neutral": 631,
+      "positive_pct": 54.2,
+      "negative_pct": 17.5,
+      "neutral_pct": 28.3,
+      "net_sentiment": 36.6,
+      "mean_compound": 0.265,
+      "by_source": {
+        "bluesky": {
+          "mentions": 1107,
+          "positive_pct": 42.1,
+          "negative_pct": 20.9,
+          "net_sentiment": 21.2
+        },
+        "reddit_brave": {
+          "mentions": 2,
+          "positive_pct": 50.0,
+          "negative_pct": 50.0,
+          "net_sentiment": 0.0
+        },
+        "youtube": {
+          "mentions": 1121,
+          "positive_pct": 66.1,
+          "negative_pct": 14.2,
+          "net_sentiment": 51.9
+        }
+      }
+    }
+  ]
+}
