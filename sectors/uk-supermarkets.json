@@ -8,7 +8,7 @@
     "Morrisons": {"aliases": ["Morrisons"], "uk_unique": true},
     "Waitrose": {"aliases": ["Waitrose"], "uk_unique": true},
     "Marks & Spencer": {"aliases": ["Marks & Spencer", "M&S"], "uk_unique": true},
-    "Co-op Food": {"aliases": ["Co-op Food", "Co-op", "Coop"], "uk_unique": false},
+    "Co-op Food": {"aliases": ["Co-op Food", "Co-op"], "uk_unique": false},
     "Aldi": {"aliases": ["Aldi"], "uk_unique": false},
     "Lidl": {"aliases": ["Lidl"], "uk_unique": false},
     "Iceland Foods": {"aliases": ["Iceland Foods", "Iceland"], "uk_unique": true},
