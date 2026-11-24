@@ -1,12 +1,7 @@
-name: Weekly sentiment collection
+name: Sentiment collection (manual)
 
 on:
-  schedule:
-    # GitHub cron runs in UTC. 08:00 UTC = 08:00 GMT every Monday
-    # (09:00 on UK clocks during British Summer Time).
-    # Scheduled runs collect every sector whose file has "include_in_schedule": true.
-    - cron: "0 8 * * 1"
-
+  # Scheduled runs removed on 24 November 2026: manual runs only.
   # Adds a "Run workflow" button (Actions tab) with a form for one-off runs and new sectors.
   workflow_dispatch:
     inputs:
