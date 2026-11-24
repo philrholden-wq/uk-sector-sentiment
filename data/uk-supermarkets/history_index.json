@@ -1,6 +1,6 @@
 {
   "sector": "UK supermarkets",
-  "updated_at_utc": "2026-11-23T17:32:40Z",
+  "updated_at_utc": "2026-11-24T11:10:36Z",
   "runs": [
     {
       "run_date": "2026-11-23",
@@ -41,6 +41,56 @@
           "positive_pct": 66.1,
           "negative_pct": 14.2,
           "net_sentiment": 51.9
+        }
+      }
+    },
+    {
+      "run_date": "2026-11-24",
+      "file": "sentiment_2026-11-24.csv",
+      "generated_at_utc": "2026-11-24T11:07:36Z",
+      "sector": "UK supermarkets",
+      "lookback_days": 30,
+      "sources": [
+        "bluesky",
+        "youtube",
+        "reddit_brave"
+      ],
+      "warnings": [
+        "Bluesky: 'Tesco' reached the 1,500-post limit, so the oldest posts in the window were not collected.",
+        "Bluesky: 'Asda' reached the 1,500-post limit, so the oldest posts in the window were not collected.",
+        "Bluesky: 'Aldi' reached the 1,500-post limit, so the oldest posts in the window were not collected.",
+        "Bluesky: 'Lidl' reached the 1,500-post limit, so the oldest posts in the window were not collected.",
+        "Bluesky: 'supermarket' reached the 1,500-post limit, so the oldest posts in the window were not collected.",
+        "Bluesky: 'food shop' reached the 1,500-post limit, so the oldest posts in the window were not collected.",
+        "Bluesky: 'grocery prices' reached the 1,500-post limit, so the oldest posts in the window were not collected."
+      ],
+      "total_mentions": 6347,
+      "positive": 3033,
+      "negative": 1338,
+      "neutral": 1976,
+      "positive_pct": 47.8,
+      "negative_pct": 21.1,
+      "neutral_pct": 31.1,
+      "net_sentiment": 26.7,
+      "mean_compound": 0.1833,
+      "by_source": {
+        "bluesky": {
+          "mentions": 4979,
+          "positive_pct": 42.8,
+          "negative_pct": 22.7,
+          "net_sentiment": 20.1
+        },
+        "reddit_brave": {
+          "mentions": 44,
+          "positive_pct": 59.1,
+          "negative_pct": 38.6,
+          "net_sentiment": 20.5
+        },
+        "youtube": {
+          "mentions": 1324,
+          "positive_pct": 66.3,
+          "negative_pct": 14.6,
+          "net_sentiment": 51.7
         }
       }
     }
