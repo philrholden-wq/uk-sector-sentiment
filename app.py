@@ -191,6 +191,8 @@ gen = selected.get("generated_at_utc")
 st.caption(
     f"Run: {uk_date(selected['run_date'])}"
     + (f" · collected {pd.Timestamp(gen).strftime('%H:%M')} UTC" if isinstance(gen, str) and gen else "")
+    + (f" · covers the previous {int(selected['lookback_days'])} days"
+       if pd.notna(selected.get("lookback_days", None)) else "")
     + (f" · sources: {', '.join(src_label(x) for x in selected['sources'])}" if isinstance(selected.get("sources"), list) else "")
     + " · scored with VADER"
 )
@@ -213,6 +215,10 @@ k4.metric("Net Sentiment Score", fmt_net(selected.get("net_sentiment")),
           help="Positive % minus Negative %. Ranges from -100 (all negative) to +100 (all positive).")
 if previous is not None:
     st.caption(f"Changes are compared with the previous run on {uk_date(previous['run_date'])}.")
+    cur_lb, prev_lb = selected.get("lookback_days"), previous.get("lookback_days")
+    if pd.notna(cur_lb) and pd.notna(prev_lb) and int(cur_lb) != int(prev_lb):
+        st.warning(f"This run covers {int(cur_lb)} days but the previous run covered {int(prev_lb)} days, "
+                   "so the changes above are not like-for-like.")
 
 # Per-source breakdown for the selected run. Uses the summary saved at run time
 # (so it still matches the KPIs after old YouTube rows are pruned).

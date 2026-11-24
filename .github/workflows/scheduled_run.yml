@@ -70,7 +70,7 @@ jobs:
           BLUESKY_APP_PASSWORD: ${{ secrets.BLUESKY_APP_PASSWORD }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           SEARCH_API_KEY: ${{ secrets.SEARCH_API_KEY }}
-          LOOKBACK_DAYS: ${{ vars.LOOKBACK_DAYS || '7' }}
+          LOOKBACK_DAYS: ${{ vars.LOOKBACK_DAYS || '30' }}
           BRAVE_MONTHLY_LIMIT: ${{ vars.BRAVE_MONTHLY_LIMIT || '900' }}
           SECTOR: ${{ inputs.sector || 'all' }}
           NEW_SECTOR_NAME: ${{ inputs.new_sector_name }}

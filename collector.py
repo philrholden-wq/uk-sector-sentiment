@@ -22,7 +22,7 @@ Every run, for each sector:
   * counts Brave requests in data/api_usage.json and stops at BRAVE_MONTHLY_LIMIT
 
 Usage:
-  python collector.py                                 # every weekly sector, last 7 days
+  python collector.py                                 # every weekly sector, last 30 days
   python collector.py --sector uk-high-street-banking # one sector
   python collector.py --new-sector-name "UK supermarkets" \\
       --new-brands "Tesco*, Sainsbury's*, Asda*, Aldi, Lidl" --new-terms "supermarket, food shop"
@@ -221,7 +221,7 @@ def sector_from_form(name: str, brands_text: str, terms_text: str, subreddits_te
 
 # ---- Collection limits (kept well inside each free tier) --------------------
 BLUESKY_PAGE_SIZE = 100            # API maximum per page
-BLUESKY_MAX_PAGES_PER_QUERY = 3    # up to 300 posts per query term
+BLUESKY_MAX_PAGES_PER_QUERY = 15   # up to 1,500 posts per query term (enough for a month of Tesco)
 
 YOUTUBE_MAX_SEARCHES = 20          # search.list: 100 calls/day free bucket
 YOUTUBE_VIDEOS_PER_SEARCH = 10
@@ -377,7 +377,7 @@ def collect_bluesky(matcher: Matcher, cutoff: datetime) -> SourceResult:
     seen: set[str] = set()
     for q in matcher.search_queries():
         cursor = None
-        for _ in range(BLUESKY_MAX_PAGES_PER_QUERY):
+        for page in range(BLUESKY_MAX_PAGES_PER_QUERY):
             params = {"q": q, "sort": "latest", "since": since, "lang": "en", "limit": BLUESKY_PAGE_SIZE}
             if cursor:
                 params["cursor"] = cursor
@@ -406,6 +406,10 @@ def collect_bluesky(matcher: Matcher, cutoff: datetime) -> SourceResult:
             cursor = resp.cursor
             if not cursor or not resp.posts:
                 break
+            if page == BLUESKY_MAX_PAGES_PER_QUERY - 1:
+                res.warnings.append(f"Bluesky: '{q}' reached the {BLUESKY_MAX_PAGES_PER_QUERY * BLUESKY_PAGE_SIZE:,}-post "
+                                    "limit, so the oldest posts in the window were not collected.")
+                log.warning(res.warnings[-1])
             time.sleep(0.3)
     log.info("Bluesky: %d UK-relevant posts", len(res.rows))
     return res
@@ -869,7 +873,8 @@ def main() -> int:
     parser.add_argument("--not-weekly", action="store_true",
                         default=os.getenv("ADD_TO_WEEKLY", "true").strip().lower() == "false",
                         help="Save the new sector without adding it to the Monday run")
-    parser.add_argument("--lookback-days", type=int, default=int(os.getenv("LOOKBACK_DAYS", "7")))
+    parser.add_argument("--lookback-days", type=int, default=int(os.getenv("LOOKBACK_DAYS") or "30"),
+                        help="Days covered by each run, for every source (default 30: a rolling month)")
     parser.add_argument("--run-date", help="Override the run date (YYYY-MM-DD), e.g. to back-fill demo data.")
     parser.add_argument("--demo", action="store_true", help="Generate synthetic data; no API calls.")
     parser.add_argument("--rebuild-index", action="store_true")
